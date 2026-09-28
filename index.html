@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dontpad Clone (Supabase + Vercel)</title>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: monospace; background-color: #f9f9f9; }
+        textarea {
+            width: 100%; height: 100%; border: none; padding: 20px;
+            box-sizing: border-box; font-size: 16px; resize: none; outline: none;
+            background: transparent; line-height: 1.5;
+        }
+    </style>
+    <!-- Carrega o cliente oficial do Supabase via CDN -->
+    <script src="https://jsdelivr.net"></script>
+</head>
+<body>
+
+    <textarea id="pad" placeholder="Comece a digitar... Salvo no banco de dados e sincronizado em tempo real!"></textarea>
+
+    <script>
+        // CONFIGURAÇÃO DO SUPABASE
+        // Substitua as strings abaixo com as credenciais do seu projeto (encontradas em Project Settings -> API)
+        const SUPABASE_URL = 'SUA_SUPABASE_URL_AQUI';
+        const SUPABASE_ANON_KEY = 'SUA_SUPABASE_ANON_KEY_AQUI';
+        
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const textarea = document.getElementById('pad');
+        const noteId = window.location.pathname.replace(/^\//, '') || 'home';
+        let timeout = null;
+
+        // 1. Carrega a nota existente quando a página abre
+        async function loadNote() {
+            const { data, error } = await supabase
+                .from('notes')
+                .select('text')
+                .eq('id', noteId)
+                .single();
+
+            if (data) {
+                textarea.value = data.text;
+            }
+        }
+
+        // 2. Salva ou atualiza a nota no Supabase
+        async function saveNote() {
+            const currentText = textarea.value;
+
+            // O 'upsert' tenta atualizar se o ID já existir, ou cria um novo se não existir
+            await supabase
+                .from('notes')
+                .upsert({ id: noteId, text: currentText });
+        }
+
+        // 3. Monitora a digitação (Aplica debounce de 400ms para não sobrecarregar o banco)
+        textarea.addEventListener('input', () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(saveNote, 400);
+        });
+
+        // 4. Escuta atualizações em tempo real vindas de outros usuários na mesma nota
+        supabase
+            .channel('public:notes')
+            .on('postgres_changes', { 
+                event: 'UPDATE', 
+                schema: 'public', 
+                table: 'notes', 
+                filter: `id=eq.${noteId}` 
+            }, (payload) => {
+                // Preserva a posição do cursor do usuário atual antes de atualizar o texto
+                const start = textarea.selectionStart;
+                const end = textarea.selectionEnd;
+
+                textarea.value = payload.new.text;
+
+                textarea.setSelectionRange(start, end);
+            })
+            .subscribe();
+
+        // Inicializa o app carregando o texto inicial
+        loadNote();
+    </script>
+</body>
+</html>
